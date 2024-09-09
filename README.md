@@ -1,10 +1,12 @@
 # Kohn–Sham inversion with mathematical guarantees
+[![](https://img.shields.io/badge/arxiv-2409.04372-red)](https://arxiv.org/abs/2409.04372)
 
 Supporting information containing structures,
 raw data and computational scripts for the paper:
 
 Michael F. Herbst, Vebjørn H. Bakkestuen and Andre Laestadius  
 *Kohn–Sham inversion with mathematical guarantees*  
+Preprint on [arxiv (2409.04372)](https://arxiv.org/abs/2409.04372)
 
 The code in this repository has been used to run all calculations
 and produce all plots of the above paper.
