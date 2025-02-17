@@ -16,7 +16,7 @@ function setup_plots()
     gr()
     default(guidefontsize = 14,
             tickfontsize = 12,
-            legendfontsize = 11,
+            legendfontsize = 12,
             titlefontsize = 16,
             fontfamily = "Computer Modern")
 end
@@ -26,24 +26,31 @@ function load_path(pathfile)
     open(JSON3.read, pathfile)
 end
 
-function add_path!(p, pathdata::AbstractDict)
+function add_path!(p, pathdata::AbstractDict; kwargs...)
     add_path!(p, pathdata["pathlength"], pathdata["branch_starts"],
-              pathdata["atoms"], pathdata["atom_symbols"])
+              pathdata["atoms"], pathdata["atom_symbols"]; kwargs...)
 end
-function add_path!(p, pathlength, branch_starts, atoms, atom_symbols)
+function add_path!(p, pathlength, branch_starts, atoms, atom_symbols; show_o_labels=false)
     vline!(p, getindex.(Ref(pathlength), first.(branch_starts)), label="", c=:grey, ls=:dashdot)
     vline!(p, [pathlength[end]], label="", c=:grey, ls=:dashdot)
     vline!(p, getindex.(Ref(pathlength), atoms), label="", c=:grey, ls=:dash)
 
-    # Manually setting path ticks for silicon
-    ticks = getindex.(Ref(pathlength), first.(branch_starts))
-    push!(ticks, pathlength[end])
-    labels = [raw"$O$", raw"$(001)$", raw"$O'$", raw"$(110)$", raw"$O''$", raw"$(111)$", raw"$O$"]
-    l = length(ticks)
-    for i in range(1,l+1,step=2)
-        insert!(ticks, i+1, (ticks[i]+ticks[i+1])/2)
+    inds = getindex.(Ref(pathlength), first.(branch_starts))
+    push!(inds, pathlength[end])
+    labels = ["("*branch_starts[i][2]*")" for i in range(1, size(branch_starts, 1))]
+    l = length(inds)
+    ticks = Float64[]
+    for i in range(1,l-1)
+        push!(ticks, (inds[i]+inds[i+1])/2)
     end
 
+    if show_o_labels
+        push!(labels, raw"$O$", raw"$O'$", raw"$O''$", raw"$O$")
+        for i in getindex.(Ref(pathlength), first.(branch_starts))
+            push!(ticks, i)
+        end
+        push!(ticks, pathlength[end])
+    end
     j = 1
     for i in getindex.(Ref(pathlength), atoms)
         push!(ticks, i)
@@ -51,7 +58,6 @@ function add_path!(p, pathlength, branch_starts, atoms, atom_symbols)
         j += 1
     end
     xticks!(p, ticks, labels)
-
     p
 end
 
@@ -61,7 +67,9 @@ function is_reference(filename)
 end
 function is_inversion(filename)
     bn, _ = splitext(basename(filename))
-    startswith(bn, "inversion_") || startswith(bn, "truncate")
+    (startswith(bn, "inversion_")
+     || startswith(bn, "truncate")
+    )
 end
 
 function load_convergence_data(basename; ε_last=0, relative_error=false)
@@ -105,9 +113,18 @@ end
 # ===========================
 #
 
-function plot_potential(basename; ε_last=0, refkey="vxc", lims=(-Inf, Inf))
+function plot_potential(basename; ε_last=0, refkey="vxc", lims=(-Inf, Inf), shift=nothing, kwargs...)
     @assert isfile(basename * "_path.json")
     path = load_path(basename * "_path.json")
+    if shift == "max"
+        vshift = maximum(path["vref"]) + 1e-4
+    elseif shift == "min"
+        vshift = minimum(path["vref"])
+    elseif shift == "mean"
+        vshift = mean(path["vref"])
+    else
+        vshift = 0
+    end
     if path["kind"] == "inversion"
         εmask = path["εs"] .≥ ε_last
         data  = (; vs=path["vs"][εmask], εs=path["εs"][εmask])
@@ -118,22 +135,28 @@ function plot_potential(basename; ε_last=0, refkey="vxc", lims=(-Inf, Inf))
         length(data.εs) > 8 && push!(snapshots, (8, 0.1))
         for (i, α) in reverse(snapshots)
             expon  = floor(Int, log10(data.εs[end-i]))                       # Computing labels for each  
-            prefac = round(10^(log10(data.εs[end-i]) - expon); digits = 1)   # 
+            prefac = round(10^(log10(data.εs[end-i]) - expon); digits = 1)   #
             label =  LaTeXString(raw"$\varepsilon=" * string(prefac) * raw"\times 10^{" * string(expon) * raw"}$")
-            plot!(p, path["pathlength"], data.vs[end-i]; c=cgrad(:speed)[α], label)
+            plot!(p, path["pathlength"], data.vs[end-i] .- vshift;
+                c=cgrad(:speed)[α], label)
         end
-        plot!(p, path["pathlength"], path["vref"]; label=L"$v_\textrm{xc}$", c=:black, ls=:dash)
+        plot!(p, [], [];label=" ",c=nothing)
+        plot!(p, path["pathlength"], path["vref"] .- vshift;
+            label=L"$v_\textrm{xc}$", c=:black, ls=:dash)
     elseif path["kind"] == "reference"
-        p = plot(path["pathlength"], path[refkey]; label=L"$v_\textrm{xc}$", c=:black)
+        p = plot(path["pathlength"], path[refkey] .- vshift;
+                label=L"$v_\textrm{xc}$", c=:black)
     else
         error("Unknown kind")
     end
-    add_path!(p, path)
+    add_path!(p, path; kwargs...)
     ylims!(p, lims...)
 end
 
 function plot_potential_error(basename;
-                              relative_error=false, ε_last=0, errorlims=nothing)
+                              relative_error=false, ε_last=0,
+                              errorlims=nothing, shift=nothing,
+                              kwargs...)
     if relative_error
         errorlims = something(errorlims, (-1, 1))
     else
@@ -145,9 +168,20 @@ function plot_potential_error(basename;
     @assert path["kind"] == "inversion"
     εmask = path["εs"] .≥ ε_last
     data = (; vref=path["vref"], vs=path["vs"][εmask], εs=path["εs"][εmask])
+
+    if shift == "max"
+        vshift = maximum(path["vref"]) + 1e-4
+    elseif shift == "min"
+        vshift = minimum(path["vref"])
+    elseif shift == "mean"
+        vshift = mean(path["vref"])
+    else
+        vshift = 0
+    end
+
     v_error = [abs.(v - data.vref) for v in data.vs]
     if relative_error
-        v_error = [abs.(v ./ data.vref) for v in v_error]
+        v_error = [abs.(v ./ (data.vref .- vshift)) for v in v_error]
     end
 
     ylabel = relative_error ? "Relative error" : "Absolute pointwise error"
@@ -159,7 +193,8 @@ function plot_potential_error(basename;
         label = "ε = $(round(data.εs[end-i]; sigdigits=2))"
         plot!(p, path["pathlength"], v_error[end-i]; c=cgrad(:speed)[α], label)
     end
-    add_path!(p, path)
+
+    add_path!(p, path; kwargs...)
     ylims!(p, errorlims...)
 end
 
@@ -217,18 +252,18 @@ function plot_convergence_comparison(basenames::AbstractVector;
                                      colors=collect(1:length(basenames)),
                                      relative_error=false,      # Plot relative error
                                      normalise_to_start=false,  # Divide by initial error
-                                     ε_last=0, quantity=:norms_v_h1)
+                                     ε_last=0, quantity=:norms_v_h1,
+                                     legend_error=false)
     ε_range = (Inf, -Inf)
     datas = map(bn -> load_convergence_data(bn; ε_last, relative_error), basenames)
 
     ylabel = string(quantity)
     if quantity == :norms_v_h1
-        ylabel = L"‖V - V_{\textrm{ref}}‖_{H^1}"
+        ylabel = L"‖v^ε_{\mathrm{xc}} - v_{\textrm{xc}}‖_{\mathcal{V}}"
     end
 
     p = plot(; xaxis=:log, yaxis=:log, xflip=true, xlabel=L"ε", ylabel, legend=:bottomleft)
     for (i, data) in enumerate(datas)
-        label = labels[i]
         mark  = marks[i]
         ls    = shapes[i]
         c     = colors[i]
@@ -237,7 +272,26 @@ function plot_convergence_comparison(basenames::AbstractVector;
         if normalise_to_start
             ys ./= ys[1]
         end
-        plot!(p, data.εs, ys; mark, lw=1.5, ls, label, c)
+        if legend_error == true
+            Δρ_hm1 = try
+                data.referror_ρ_hm1
+            catch
+                0
+            end
+
+            if Δρ_hm1 != 0
+                expon  = floor(Int, log10(Δρ_hm1))                       # Computing labels for each  
+                prefac = round(10^(log10(Δρ_hm1) - expon); digits = 1)   # Δρ using the H^-1 norm 
+                labels[i] = LaTeXString(labels[i] * raw", $‖Δρ‖ = " 
+                        * string(prefac) * raw"\times 10^{" * string(expon) * raw"}$")
+            else
+                labels[i] = LaTeXString(labels[i] * raw", $‖Δρ‖ = 0$")
+            end
+        else
+            nothing
+        end
+
+        plot!(p, data.εs, ys; mark, lw=1.5, ls, label=labels[i], c)
 
         ε_range = (min(ε_range[1], minimum(data.εs)), max(ε_range[2], maximum(data.εs)))
     end
@@ -250,7 +304,8 @@ end
 
 function plot_perturbation_analysis(basenames::AbstractVector{<:AbstractString};
                                     labels=basenames,
-                                    colors=collect(1:length(basenames)))
+                                    colors=collect(1:length(basenames)),
+                                    legend_error=false)
     @assert length(labels) == length(basenames)
     datas = map(basenames) do bn
         @assert isfile(bn * "_perturb.json")
@@ -272,9 +327,12 @@ function plot_perturbation_analysis(basenames::AbstractVector{<:AbstractString};
         plot!(p_R, data.εs, data.Rεs; label=labels[i], color=colors[i], mark=:x)
         plot!(p_S, data.εs, data.Sεs; label=labels[i], color=colors[i], mark=:x)
 
-        expon  = floor(Int, log10(data.Δρ_hm1))                       # Computing labels for each  
-        prefac = round(10^(log10(data.Δρ_hm1) - expon); digits = 1)   # Δρ using the H^-1 norm 
-        labels[i] = LaTeXString(labels[i] * raw", $‖Δρ‖ = " * string(prefac) * raw"\times 10^{" * string(expon) * raw"}$")
+        if legend_error == true
+            expon  = floor(Int, log10(data.Δρ_hm1))                       # Computing labels for each  
+            prefac = round(10^(log10(data.Δρ_hm1) - expon); digits = 1)   # Δρ using the H^-1 norm 
+            labels[i] = LaTeXString(labels[i] * raw", $‖Δρ‖ = " 
+                        * string(prefac) * raw"\times 10^{" * string(expon) * raw"}$")
+        end
 
         plot!(p_Q, data.εs, data.Qεs; label=labels[i], color=colors[i], mark=:x)
     end
@@ -289,67 +347,89 @@ end
 function main()
     setup_plots()
 
-    ε_last = 7e-8
-    # Potential error in exact inversion
-    p_rel = plot_potential_error("inversion_silicon_Ecut_45_kgrid_10_upf_vxc";
-                                 ε_last, relative_error=true, errorlims=(2e-6, 1))
-    savefig(p_rel, "inversion_silicon_Ecut_45_kgrid_10_upf_vxc_pot_relerror.pdf")
+    let ε_last = 7e-8
+        # Potential error in exact inversion
+        p_rel = plot_potential_error("inversion_silicon_Ecut_45_kgrid_10";
+                                     ε_last, relative_error=true, errorlims=(2e-6, 1),
+                                     show_o_labels=true)
+        savefig(p_rel, "inversion_silicon_Ecut_45_kgrid_10_pot_relerror.pdf")
 
-    p_abs = plot_potential_error("inversion_silicon_Ecut_45_kgrid_10_upf_vxc";
-                                 ε_last, relative_error=false)
-    savefig(p_abs, "inversion_silicon_Ecut_45_kgrid_10_upf_vxc_pot_abserror.pdf")
+        p_abs = plot_potential_error("inversion_silicon_Ecut_45_kgrid_10";
+                                     ε_last, relative_error=false,
+                                     show_o_labels=true)
+        savefig(p_abs, "inversion_silicon_Ecut_45_kgrid_10_pot_abserror.pdf")
 
-    # Potential plot in exact inversion
-    p_pot = plot_potential("inversion_silicon_Ecut_45_kgrid_10_upf_vxc"; ε_last)
-    savefig(p_pot, "inversion_silicon_Ecut_45_kgrid_10_upf_vxc_pot.pdf")
+        # Potential plot in exact inversion
+        p_pot = plot_potential("inversion_silicon_Ecut_45_kgrid_10"; ε_last)
+        savefig(p_pot, "inversion_silicon_Ecut_45_kgrid_10_pot.pdf")
 
-    # Potential comparison composite
-    plot!(p_pot; xaxis=false, bottom_margin=-52*Plots.PlotMeasures.px, legend_column =4, legend=(-0.07, 1.18),
-                background_color_legend = :transparent, foreground_color_legend = nothing)
-    plot!(p_rel; legend=false, yaxis=:log, yticks=[1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e0], 
-                top_margin=35 * Plots.PlotMeasures.px)
-    p = plot(p_pot, p_rel, layout=(2,1), top_margin=30 * Plots.PlotMeasures.px)
-    savefig(p, "inversion_silicon_Ecut_45_kgrid_10_upf_vxc_pot_composite.pdf")
+        # Potential comparison composite
+        plot!(p_pot; xaxis=false, bottom_margin=-52*Plots.PlotMeasures.px,
+                    legend_column=3, legend=(0.07, 1.25),
+                    background_color_legend = :transparent, foreground_color_legend = nothing)
+        plot!(p_rel; legend=false, yaxis=:log, yticks=[1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e0],
+                    top_margin=40 * Plots.PlotMeasures.px)
+        p = plot(p_pot, p_rel, layout=(2,1), top_margin=45 * Plots.PlotMeasures.px)
+        savefig(p, "inversion_silicon_Ecut_45_kgrid_10_pot_composite.pdf")
+    end
+
+    for base in ("inversion_kcl_Ecut_65_kgrid_15", "inversion_gaas_Ecut_83_kgrid_17", )
+        show_o_labels = base == "inversion_kcl_Ecut_65_kgrid_15"
+        ε_last = 5e-7  # Works well for KCl
+        p_rel = plot_potential_error(base; ε_last, relative_error=true, errorlims=(2e-6, 1), show_o_labels)
+        p_pot = plot_potential(base; ε_last)
+        plot!(p_pot; xaxis=false, bottom_margin=-52*Plots.PlotMeasures.px,
+                    legend_column=3, legend=(0.07, 1.32),
+                    background_color_legend = :transparent, foreground_color_legend = nothing)
+        plot!(p_rel; legend=false, yaxis=:log, yticks=[1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1e0],
+                    top_margin=40 * Plots.PlotMeasures.px)
+        p = plot(p_pot, p_rel, layout=(2,1), top_margin=47 * Plots.PlotMeasures.px)
+        savefig(p, base * "_composite.pdf")
+    end
 
     # XC convergence with truncation
     p = plot_convergence_comparison([
-            "inversion_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate30_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate25_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate20_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate15_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate10_silicon_Ecut_45_kgrid_10_upf_vxc"
+            "truncate10_silicon_Ecut_45_kgrid_10",
+            "truncate15_silicon_Ecut_45_kgrid_10",
+            "truncate20_silicon_Ecut_45_kgrid_10",
+            "truncate25_silicon_Ecut_45_kgrid_10",
+            "truncate30_silicon_Ecut_45_kgrid_10",
+            "truncate35_silicon_Ecut_45_kgrid_10",
+            "inversion_silicon_Ecut_45_kgrid_10"
         ]; labels=[
-            "Ecut = 45",
-            "Ecut = 30",
-            "Ecut = 25",
-            "Ecut = 20",
-            "Ecut = 15",
-            "Ecut = 10",
-        ], ε_last=1e-8)
-    ylims!(p, 0.03, 10)
-    savefig(p, "inversion_silicon_Ecut_45_kgrid_10_upf_vxc_truncate.pdf")
+            raw"$E_{\mathrm{cut}} = 10$",
+            raw"$E_{\mathrm{cut}} = 15$",
+            raw"$E_{\mathrm{cut}} = 20$",
+            raw"$E_{\mathrm{cut}} = 25$",
+            raw"$E_{\mathrm{cut}} = 30$",
+            raw"$E_{\mathrm{cut}} = 35$",
+            raw"$E_{\mathrm{cut}} = 45$",
+        ], ε_last=2e-8, legend_error=true)
+    ylims!(p, 0.01, 10)
+    plot!(p, size=(600,350), foreground_color_legend = nothing, background_color_legend=nothing)
+    savefig(p, "inversion_silicon_Ecut_45_kgrid_10_truncate.pdf")
 
     p_Q, p_R, p_S = plot_perturbation_analysis([
-            "truncate30_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate25_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate20_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate15_silicon_Ecut_45_kgrid_10_upf_vxc",
-            "truncate10_silicon_Ecut_45_kgrid_10_upf_vxc"
+            "truncate10_silicon_Ecut_45_kgrid_10",
+            "truncate15_silicon_Ecut_45_kgrid_10",
+            "truncate20_silicon_Ecut_45_kgrid_10",
+            "truncate25_silicon_Ecut_45_kgrid_10",
+            "truncate30_silicon_Ecut_45_kgrid_10",
        ]; labels=[
-            raw"$E_{\mathrm{cut}} = 30$",
-            raw"$E_{\mathrm{cut}} = 25$",
-            raw"$E_{\mathrm{cut}} = 20$",
+            raw"$E_{\mathrm{cut}} = 10$",
             raw"$E_{\mathrm{cut}} = 15$",
-            raw"$E_{\mathrm{cut}} = 10$"])
+            raw"$E_{\mathrm{cut}} = 20$",
+            raw"$E_{\mathrm{cut}} = 25$",
+            raw"$E_{\mathrm{cut}} = 30$"],
+            legend_error=false)
     xtick = [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2,1e-1,1e-0]
-    plot!(p_Q, xticks=xtick, yticks=[1e-3, 1e-2, 1e-1, 1e0],
-          size=(600,350), foreground_color_legend = nothing)
-    savefig(p_Q, "inversion_Ecut_45_kgrid_10_upf_vxc_Qε.pdf")
+    plot!(p_Q, xticks=xtick, yticks=[1e-3, 1e-2, 1e-1, 1e0], size=(600,350),
+            foreground_color_legend = nothing, background_color_legend=nothing)
+    savefig(p_Q, "inversion_Ecut_45_kgrid_10_Qε.pdf")
 
     plot!(p_S; xaxis=false, xlabel="", bottom_margin=-35 * Plots.PlotMeasures.px, legend=false)
-    plot!(p_R; foreground_color_legend = nothing)
+    plot!(p_R; foreground_color_legend = nothing, background_color_legend=nothing)
     p = plot!(p_S, p_R, layout=(2,1))
     xticks!(p, xtick)
-    savefig(p, "inversion_Ecut_45_kgrid_10_upf_vxc_SεRε.pdf")
+    savefig(p, "inversion_Ecut_45_kgrid_10_SεRε.pdf")
 end

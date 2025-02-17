@@ -23,7 +23,9 @@ end
 
 function is_inversion(filename)
     bn, _ = splitext(basename(filename))
-    startswith(bn, "inversion_") || startswith(bn, "truncate")
+    (startswith(bn, "inversion_")
+     || startswith(bn, "truncate")
+    )
 end
 
 function pathfile(filename)
@@ -36,7 +38,18 @@ function testsystem_path(basis; tol=1e-6)
     @assert basis.fft_size[1] == basis.fft_size[2] == basis.fft_size[3]
     sz = basis.fft_size[1]
 
-    if all(in([:Si]), atomic_symbol.(basis.model.atoms))
+    if all(in([:K, :Cl]), atomic_symbol.(basis.model.atoms))
+        # Find bottom-left corner
+        @assert basis.model.positions[1] == zeros(3)
+        δ, index = findmin(norm, r_vectors(basis))
+        @assert abs(δ) < tol
+    elseif all(in([:Ga, :As]), atomic_symbol.(basis.model.atoms))
+        # Find bottom-left corner
+        @assert basis.model.positions[1] == zeros(3)
+        @assert basis.model.positions[2] == ones(3)/4
+        δ, index = findmin(r -> norm(r - ones(3)/8), r_vectors(basis))
+        @assert abs(δ) < tol
+    elseif all(in([:Si]), atomic_symbol.(basis.model.atoms))
         # Find point sitting between two bonds
         @assert basis.model.positions[1] == zeros(3)
         @assert basis.model.positions[2] == ones(3)/4

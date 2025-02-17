@@ -4,7 +4,7 @@ using LinearAlgebra
 """
 DualMap: Implements
 
-1/(2ε) ∫ρ(x)[ρ-ρref](y) G(x-y) dx dy
+1/ε ∫ [ρ(x) - ρref(x)] * [ρ(y) - ρref(y)] G(x-y) dx dy
 
 where G(x, y) = exp(-|x-y|) / |x-y| (the Yukawa kernel)
 and the integral running both times over the unit cell.
@@ -51,23 +51,14 @@ end
 DFTK.@timing "ene_ops: dualmap" function DFTK.ene_ops(term::TermDualMap{Tref}, basis::PlaneWaveBasis{T},
                                                       ψ, occupation; ρ, kwargs...) where {T,Tref}
     cTref = complex(Tref)
-    ρ_fourier = cTref.(fft(basis, total_density(ρ)))
-    ρtot_fourier = ρ_fourier - term.ρref_tot_fourier
-    pot_fourier  = term.yukawa_coeffs .* ρtot_fourier
+    ρtot = total_density(ρ)
+    ρtot_fourier  = cTref.(fft(basis, ρtot))
+    ρdiff_fourier = ρtot_fourier - term.ρref_tot_fourier
+    pot_fourier   = term.yukawa_coeffs .* ρdiff_fourier
 
-    E        = T(real(dot(pot_fourier, ρtot_fourier) / 2))
+    E        = T(real(dot(pot_fourier, ρdiff_fourier))/2)
     pot_real = T.(real(basis.ifft_normalization * (term.opBFFT * pot_fourier)))
 
     ops = [DFTK.RealSpaceMultiplication(basis, kpt, pot_real) for kpt in basis.kpoints]
     (; E, ops)
-end
-
-
-function apply_kernel(term::TermDualMap, basis::PlaneWaveBasis{T}, δρ::AbstractArray{Tδρ};
-                      kwargs...) where {T, Tδρ}
-    δV = zero(δρ)
-    δρtot = total_density(δρ)
-    # Note broadcast here: δV is 4D, and all its spin components get the same potential.
-    δV .= T.(real(basis.ifft_normalization * (term.opBFFT * (term.yukawa_coeffs .* fft(basis, δρtot)))))
-    δV
 end

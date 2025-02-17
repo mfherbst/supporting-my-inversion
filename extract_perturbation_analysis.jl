@@ -12,7 +12,9 @@ include("kohn_sham_inversion.jl")
 
 function is_inversion(filename)
     bn, _ = splitext(basename(filename))
-    startswith(bn, "inversion_") || startswith(bn, "truncate")
+    (startswith(bn, "inversion_")
+     || startswith(bn, "truncate")
+    )
 end
 
 function perturbfile(filename)
@@ -92,10 +94,10 @@ function main()
     #
     # Truncate on silicon Ecut 45 kgrid 10 Vxc
     #
-    unperturbed_file = "inversion_silicon_Ecut_45_kgrid_10_upf_vxc.jld2"
+    unperturbed_file = "inversion_silicon_Ecut_45_kgrid_10.jld2"
     truncate_files = [
-        "truncate$(trunc)_silicon_Ecut_45_kgrid_10_upf_vxc.jld2"
-        for trunc in (10, 15, 20, 25, 30)
+        "truncate$(trunc)_silicon_Ecut_45_kgrid_10.jld2"
+        for trunc in (10, 15, 20, 25, 30, 35)
     ]
     for trunc in truncate_files
         extract_perturbation_analysis(unperturbed_file, trunc)
